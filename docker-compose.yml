@@ -5,10 +5,13 @@ services:
     container_name: cdc-postgres
     restart: unless-stopped
 
+    env_file:
+      - .env
+
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: inventory
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
 
     ports:
       - "5432:5432"
@@ -22,30 +25,51 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
 
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER}"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
 
   mysql:
-
     image: mysql:8.4
 
     container_name: cdc-mysql
 
     restart: unless-stopped
 
+    env_file:
+      - .env
+
     environment:
-
-      MYSQL_ROOT_PASSWORD: root
-
-      MYSQL_DATABASE: inventory
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
 
     ports:
-
       - "3306:3306"
 
     volumes:
-
       - mysql_data:/var/lib/mysql
-
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 
 
@@ -58,14 +82,12 @@ services:
     restart: unless-stopped
 
     ports:
-
       - "9092:9092"
 
 
     environment:
 
-
-      # KRaft mode - NO ZooKeeper
+      # Kafka KRaft mode (NO ZooKeeper)
 
       KAFKA_NODE_ID: 1
 
@@ -102,7 +124,6 @@ services:
 
 
 
-
   connect:
 
     build:
@@ -118,11 +139,14 @@ services:
 
     depends_on:
 
-      - postgres
+      postgres:
+        condition: service_healthy
 
-      - mysql
+      mysql:
+        condition: service_healthy
 
-      - kafka
+      kafka:
+        condition: service_started
 
 
     ports:
@@ -163,7 +187,27 @@ services:
       VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
 
 
+      CONNECT_TOPIC_CREATION_ENABLE: "true"
+
+
       REST_ADVERTISED_HOST_NAME: connect
+
+
+    healthcheck:
+
+      test:
+        [
+          "CMD",
+          "curl",
+          "-f",
+          "http://localhost:8083/"
+        ]
+
+      interval: 30s
+
+      timeout: 10s
+
+      retries: 5
 
 
 

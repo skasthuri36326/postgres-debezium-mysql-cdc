@@ -1,17 +1,19 @@
 # PostgreSQL → Debezium → Kafka KRaft → MySQL CDC
 
-A complete Change Data Capture (CDC) example using:
+A complete Change Data Capture (CDC) pipeline using:
 
 - PostgreSQL 16
-- Debezium 3.2
-- Apache Kafka 3.9 (KRaft mode - no ZooKeeper)
+- Debezium
+- Apache Kafka 3.9 (KRaft mode)
 - Kafka Connect
 - Debezium JDBC Sink Connector
 - MySQL 8.4
 
+This project demonstrates capturing PostgreSQL database changes using WAL logical replication and synchronizing changes into MySQL using Debezium and Kafka.
+
 ---
 
-## Architecture
+# Architecture
 
 ```
 PostgreSQL
@@ -37,14 +39,27 @@ MySQL
 
 ---
 
+# Features
+
+- No ZooKeeper
+- Kafka KRaft mode
+- PostgreSQL WAL replication
+- Debezium CDC
+- Kafka Connect integration
+- MySQL synchronization
+- Docker Compose deployment
+
+---
+
 # Project Structure
 
 ```
 postgres-debezium-mysql-cdc/
 
-├── docker-compose.yml
-
 ├── README.md
+├── docker-compose.yml
+├── .env.example
+├── .gitignore
 
 ├── kafka-connect/
 │   └── Dockerfile
@@ -62,6 +77,7 @@ postgres-debezium-mysql-cdc/
 └── scripts/
     ├── register-source.sh
     ├── register-sink.sh
+    ├── status.sh
     └── test.sh
 ```
 
@@ -74,34 +90,54 @@ Install:
 - Docker
 - Docker Compose
 
-Check versions:
+Verify:
 
 ```bash
 docker --version
+
 docker compose version
 ```
 
 ---
 
-# Start the Environment
+# Environment Configuration
 
-## 1. Build containers
+Create the local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Example `.env.example`:
+
+```env
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=inventory
+
+MYSQL_ROOT_PASSWORD=root
+MYSQL_DATABASE=inventory
+```
+
+The `.env` file contains local configuration values and should not be committed to Git.
+
+---
+
+# Start CDC Environment
+
+## Build containers
 
 ```bash
 docker compose build
 ```
 
----
-
-## 2. Start services
+## Start services
 
 ```bash
 docker compose up -d
 ```
 
----
-
-## 3. Check containers
+Check running containers:
 
 ```bash
 docker ps
@@ -118,6 +154,42 @@ cdc-connect
 
 ---
 
+# Services and Ports
+
+| Service | Port |
+|---|---:|
+| PostgreSQL | 5432 |
+| MySQL | 3306 |
+| Kafka | 9092 |
+| Kafka Connect REST API | 8083 |
+
+---
+
+# Make Scripts Executable
+
+Before running connector scripts:
+
+```bash
+chmod +x scripts/*.sh
+```
+
+Verify:
+
+```bash
+ls -l scripts/
+```
+
+Expected:
+
+```
+-rwxr-xr-x register-source.sh
+-rwxr-xr-x register-sink.sh
+-rwxr-xr-x status.sh
+-rwxr-xr-x test.sh
+```
+
+---
+
 # Register Debezium PostgreSQL Source Connector
 
 Run:
@@ -126,17 +198,17 @@ Run:
 ./scripts/register-source.sh
 ```
 
-Expected response:
+Creates:
 
-```json
-{
-  "name": "postgres-source"
-}
 ```
+postgres-source
+```
+
+connector.
 
 ---
 
-# Register MySQL Sink Connector
+# Register Debezium MySQL Sink Connector
 
 Run:
 
@@ -144,45 +216,42 @@ Run:
 ./scripts/register-sink.sh
 ```
 
-Expected response:
+Creates:
 
-```json
-{
-  "name": "mysql-sink"
-}
 ```
+mysql-sink
+```
+
+connector.
 
 ---
 
-# Verify Connectors
+# Check Connector Status
 
-List connectors:
+Check Debezium connector status:
 
 ```bash
-curl http://localhost:8083/connectors
+./scripts/status.sh
 ```
 
-Expected:
+Expected connector state:
 
-```json
-[
-  "postgres-source",
-  "mysql-sink"
-]
+```
+RUNNING
 ```
 
 ---
 
-## Check Source Status
+## Manual Status Check
+
+PostgreSQL Source:
 
 ```bash
 curl \
 http://localhost:8083/connectors/postgres-source/status
 ```
 
----
-
-## Check Sink Status
+MySQL Sink:
 
 ```bash
 curl \
@@ -207,20 +276,16 @@ Run:
 
 The test performs:
 
-1. Insert into PostgreSQL
-2. Debezium captures WAL change
-3. Kafka receives CDC event
-4. JDBC Sink writes to MySQL
+1. Insert data into PostgreSQL
+2. Debezium captures WAL changes
+3. Kafka receives CDC events
+4. MySQL receives synchronized data
 
-Then:
+The pipeline validates:
 
-1. Update PostgreSQL
-2. MySQL is updated
-
-Then:
-
-1. Delete PostgreSQL row
-2. MySQL row is removed
+- INSERT events
+- UPDATE events
+- DELETE events
 
 ---
 
@@ -233,17 +298,32 @@ docker exec -it cdc-postgres \
 psql -U postgres -d inventory
 ```
 
-Insert:
+Insert data:
 
 ```sql
 INSERT INTO customers(name,email)
 VALUES
-('Test User','test@example.com');
+('CDC User','cdc@test.com');
+```
+
+Update data:
+
+```sql
+UPDATE customers
+SET name='CDC Updated'
+WHERE email='cdc@test.com';
+```
+
+Delete data:
+
+```sql
+DELETE FROM customers
+WHERE email='cdc@test.com';
 ```
 
 ---
 
-## Check MySQL
+# Verify Data in MySQL
 
 Connect:
 
@@ -258,25 +338,59 @@ Query:
 SELECT * FROM customers;
 ```
 
+The PostgreSQL changes should appear in MySQL.
+
+---
+
+# PostgreSQL CDC Configuration
+
+PostgreSQL logical replication is enabled using:
+
+```yaml
+wal_level=logical
+```
+
+Configured in:
+
+```
+docker-compose.yml
+```
+
+Verify:
+
+```bash
+docker exec -it cdc-postgres \
+psql -U postgres \
+-c "SHOW wal_level;"
+```
+
 Expected:
 
 ```
-+----+-----------+-------------------+
-| id | name      | email             |
-+----+-----------+-------------------+
-|  1 | Test User | test@example.com  |
-+----+-----------+-------------------+
+logical
 ```
 
 ---
 
-# Kafka Topic
+# Kafka Configuration
 
-Debezium creates:
+This project uses Kafka KRaft mode.
+
+ZooKeeper is not required.
+
+Kafka runs with:
 
 ```
-postgres.public.customers
+Broker
++
+Controller
 ```
+
+using the built-in Raft metadata management.
+
+---
+
+# Kafka Topics
 
 List Kafka topics:
 
@@ -287,58 +401,45 @@ kafka-topics.sh \
 --list
 ```
 
----
-
-# PostgreSQL CDC Configuration
-
-PostgreSQL must have logical replication enabled:
+Debezium creates topics similar to:
 
 ```
-wal_level=logical
-```
-
-This is configured automatically in:
-
-```
-docker-compose.yml
+postgres.public.customers
 ```
 
 ---
 
-# Kafka Configuration
+# Useful Docker Commands
 
-This project uses:
+## View logs
 
+Kafka Connect:
+
+```bash
+docker logs cdc-connect
 ```
-Kafka KRaft Mode
+
+PostgreSQL:
+
+```bash
+docker logs cdc-postgres
 ```
 
-ZooKeeper is not required.
+MySQL:
 
-Kafka manages metadata using its own Raft quorum.
+```bash
+docker logs cdc-mysql
+```
 
 ---
 
-# Useful Ports
-
-| Service | Port |
-|---|---:|
-| PostgreSQL | 5432 |
-| MySQL | 3306 |
-| Kafka | 9092 |
-| Kafka Connect REST | 8083 |
-
----
-
-# Stop Environment
-
-Stop containers:
+## Stop environment
 
 ```bash
 docker compose down
 ```
 
-Remove data volumes:
+Remove volumes:
 
 ```bash
 docker compose down -v
@@ -348,37 +449,57 @@ docker compose down -v
 
 # Troubleshooting
 
-## Check Kafka Connect logs
+## Connector already exists
+
+Delete the connector:
+
+```bash
+curl -X DELETE \
+http://localhost:8083/connectors/postgres-source
+```
+
+or:
+
+```bash
+curl -X DELETE \
+http://localhost:8083/connectors/mysql-sink
+```
+
+Then register again.
+
+---
+
+## PostgreSQL WAL Error
+
+Check:
+
+```bash
+docker exec -it cdc-postgres \
+psql -U postgres \
+-c "SHOW wal_level;"
+```
+
+Expected:
+
+```
+logical
+```
+
+---
+
+## Kafka Connect Issues
+
+Check logs:
 
 ```bash
 docker logs cdc-connect
 ```
 
----
+Common causes:
 
-## Check PostgreSQL logs
-
-```bash
-docker logs cdc-postgres
-```
-
----
-
-## Check MySQL logs
-
-```bash
-docker logs cdc-mysql
-```
-
----
-
-## Restart everything
-
-```bash
-docker compose down
-
-docker compose up -d --build
-```
+- Kafka is not ready
+- Connector plugin is missing
+- Database connection failed
 
 ---
 
@@ -388,13 +509,13 @@ For production deployments consider:
 
 - Multiple Kafka brokers
 - TLS encryption
-- Kafka authentication
+- Authentication
 - Schema Registry
-- Connector secrets management
-- Monitoring with Prometheus/Grafana
-- Dead Letter Queue handling
+- Secrets management
+- Monitoring
 - Backup strategy
 - Kubernetes deployment
+- Dead Letter Queue handling
 
 ---
 
@@ -404,24 +525,25 @@ This project demonstrates:
 
 ```
 PostgreSQL
-    |
-    v
+      |
+      v
 Debezium CDC
-    |
-    v
+      |
+      v
 Kafka KRaft
-    |
-    v
+      |
+      v
 Debezium JDBC Sink
-    |
-    v
+      |
+      v
 MySQL
 ```
 
-## Highlights
+Technologies used:
 
-- Kafka runs in KRaft mode without ZooKeeper.
-- PostgreSQL changes are captured using WAL logical replication.
-- Debezium provides CDC event streaming.
-- Kafka transports change events.
-- MySQL receives replicated data through the Debezium JDBC Sink Connector.
+- PostgreSQL WAL logical replication
+- Debezium Change Data Capture
+- Apache Kafka KRaft mode
+- Kafka Connect
+- MySQL synchronization
+- Docker Compose
